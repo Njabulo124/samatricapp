@@ -1,0 +1,2069 @@
+server js
+const express = require('express');
+const mysql = require('mysql2/promise'); // Use promise-based MySQL
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const bcrypt = require('bcrypt'); // Import bcrypt for password hashing
+
+// Create an Express application
+const app = express();
+const port = 5000;
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json()); // Parse JSON requests
+
+// MySQL database connection
+const db = mysql.createPool({
+    host: 'localhost',
+    user: 'root',
+    password: '@Madlanduna1998', // Replace with your actual MySQL password
+    database: 'samatricapp',
+});
+
+// Connect to MySQL (no longer needed since pool handles connections)
+
+// Signup route
+app.post('/signup', async (req, res) => {
+    const { name, surname, email, password } = req.body;
+
+    try {
+        // Check if the user already exists
+        const [existingUser] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (existingUser.length > 0) return res.status(400).json({ message: 'User already exists' });
+
+        // Hash the password
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        // Insert the new user into the database
+        await db.query('INSERT INTO users (name, surname, email, password) VALUES (?, ?, ?, ?)', 
+        [name, surname, email, hashedPassword]);
+        
+        res.status(201).json({ message: 'User registered successfully!' });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'An error occurred while registering the user' });
+    }
+});
+
+// Login route
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        const [results] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (results.length === 0) return res.status(400).json({ message: 'User does not exist' });
+
+        const user = results[0];
+
+        // Compare hashed password with the provided password
+        const match = await bcrypt.compare(password, user.password);
+        if (match) {
+            res.status(200).json({ message: 'Login successful!' });
+        } else {
+            res.status(400).json({ message: 'Incorrect credentials' });
+        }
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Get user ID route
+app.get('/getUserId', async (req, res) => {
+    const email = req.query.email; // Get the email from the query string
+
+    try {
+        const [results] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+        if (results.length > 0) {
+            res.json({ userId: results[0].id }); // Respond with the userId
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (err) {
+        console.error('Error fetching user ID:', err);
+        return res.status(500).json({ message: 'Internal Server Error' }); // Send a 500 response on error
+    }
+});
+
+// Get all subjects
+app.get('/get-subjects', async (req, res) => {
+    try {
+        const [results] = await db.query('SELECT id, name FROM subjects');
+        if (results.length === 0) return res.status(404).json({ message: 'No subjects found' });
+
+        res.json(results);
+    } catch (err) {
+        return res.status(500).json({ error: err });
+    }
+});
+
+// Add or update marks
+app.post('/addMarks', async (req, res) => {
+    const { subjectId, marks } = req.body;
+    const userEmail = req.headers['user-email'];
+
+    const query = `
+        INSERT INTO user_marks (user_id, subject_id, marks)
+        VALUES ((SELECT id FROM users WHERE email = ?), ?, ?)
+        ON DUPLICATE KEY UPDATE marks = ?;
+    `;
+
+    try {
+        await db.query(query, [userEmail, subjectId, marks, marks]);
+        res.json({ message: 'Marks successfully added/updated!' });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Get user marks by email
+app.get('/get-marks', async (req, res) => {
+    const userEmail = req.query.email;
+
+    const query = `
+        SELECT user_marks.subject_id, subjects.name AS subject_name, user_marks.marks 
+        FROM user_marks
+        JOIN subjects ON user_marks.subject_id = subjects.id
+        JOIN users ON users.id = user_marks.user_id
+        WHERE users.email = ?;
+    `;
+
+    try {
+        const [results] = await db.query(query, [userEmail]);
+        if (results.length === 0) return res.status(404).json({ message: 'No subjects or marks found for this user.' });
+
+        console.log('Marks data fetched from DB:', results); // Log the fetched data
+        res.json(results);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete marks
+app.delete('/deleteMarks', async (req, res) => {
+    console.log('Delete request received:', req.body, req.headers['user-email']);
+    const subjectId = req.body.subjectId;
+    const userEmail = req.headers['user-email'];
+
+    // Input validation
+    if (!subjectId || !userEmail) {
+        return res.status(400).json({ message: 'Subject ID and user email are required.' });
+    }
+
+    // Validate subjectId
+    if (subjectId === 'undefined' || isNaN(parseInt(subjectId))) {
+        return res.status(400).json({ message: 'Invalid subject ID.' });
+    }
+
+    const deleteQuery = `
+        DELETE FROM user_marks
+        WHERE user_id = (SELECT id FROM users WHERE email = ?)
+        AND subject_id = ?;
+    `;
+
+    try {
+        const [result] = await db.query(deleteQuery, [userEmail, parseInt(subjectId)]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: 'No matching subject found for deletion.' });
+        }
+
+        console.log('Delete result:', result);
+        res.json({ message: 'Subject successfully deleted!' });
+    } catch (err) {
+        console.error('Error in delete query:', err);
+        return res.status(500).json({ message: 'Internal server error', error: err.message });
+    }
+});
+
+// Get eligible courses
+app.get('/api/eligible-courses/:userId', async (req, res) => {
+    const userId = req.params.userId;
+
+    const query = `
+        WITH student_subjects AS (
+            SELECT 
+                um.subject_id,
+                um.marks,
+                CASE
+                    -- Special rule for Life Orientation (subject_id = 43)
+                    WHEN um.subject_id = 43 AND um.marks >= 80 THEN 1
+                    WHEN um.subject_id = 43 AND um.marks < 80 THEN 0
+                    -- Normal APS calculation for other subjects
+                    WHEN um.marks >= 80 THEN 7
+                    WHEN um.marks >= 70 THEN 6
+                    WHEN um.marks >= 60 THEN 5
+                    WHEN um.marks >= 50 THEN 4
+                    WHEN um.marks >= 40 THEN 3
+                    WHEN um.marks >= 30 THEN 2
+                    ELSE 1
+                END AS aps_points
+            FROM 
+                user_marks um
+            WHERE 
+                um.user_id = ?  -- Using parameter for userId
+        ),
+        student_aps AS (
+            SELECT 
+                SUM(aps_points) AS total_aps
+            FROM 
+                student_subjects
+        ),
+        course_eligibility AS (
+            SELECT 
+                c.course_id,
+                c.course_name,
+                u.university_name,
+                c.min_aps_score,
+                sa.total_aps,
+                CASE 
+                    WHEN sa.total_aps >= c.min_aps_score THEN 1
+                    ELSE 0
+                END AS meets_aps_requirement,
+                COALESCE(
+                    MIN(
+                        CASE 
+                            WHEN cr.key_subject = 1 AND ss.marks >= cr.min_mark THEN 1
+                            WHEN cr.key_subject = 1 AND (ss.marks IS NULL OR ss.marks < cr.min_mark) THEN 0
+                            ELSE NULL
+                        END
+                    ),
+                    1
+                ) AS meets_compulsory_requirements
+            FROM 
+                courses c
+            JOIN 
+                universities u ON c.university_id = u.university_id
+            CROSS JOIN 
+                student_aps sa
+            LEFT JOIN 
+                course_requirements cr ON c.course_id = cr.course_id
+            LEFT JOIN 
+                student_subjects ss ON cr.subject_id = ss.subject_id
+            GROUP BY 
+                c.course_id, 
+                c.course_name, 
+                u.university_name, 
+                c.min_aps_score, 
+                sa.total_aps
+        )
+        SELECT
+            course_id,
+            course_name,
+            university_name,
+            min_aps_score,
+            total_aps,
+            meets_aps_requirement,
+            meets_compulsory_requirements
+        FROM 
+            course_eligibility
+        WHERE 
+            meets_aps_requirement = 1 AND meets_compulsory_requirements = 1;
+    `;
+
+    try {
+        const [rows] = await db.query(query, [userId]);
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'No eligible courses found for the user.' });
+        }
+
+        res.json(rows);
+    } catch (err) {
+        console.error('Error fetching eligible courses:', err);
+        return res.status(500).json({ message: 'Internal server error', error: err.message });
+    }
+});
+
+// Start the server
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});
+
+add_subject js
+document.addEventListener('DOMContentLoaded', function () {
+    const addMarksForm = document.getElementById('addMarksForm');
+    const subjectSelect = document.getElementById('subjectSelect');
+    const subjectMarks = document.getElementById('subjectMarks');
+    const subjectList = document.getElementById('subjectList');
+    let userEmail = localStorage.getItem('userEmail');
+    let userName = localStorage.getItem('userName');
+    let userId = localStorage.getItem('userId');
+
+    console.log('Initial userId:', userId);
+
+    async function fetchUserId(email) {
+        console.log('Fetching user ID for email:', email);
+        try {
+            const response = await fetch(`http://localhost:5000/getUserId?email=${email}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch user ID');
+            }
+            const data = await response.json();
+            userId = data.userId;
+            localStorage.setItem('userId', userId);
+            console.log('Fetched userId:', userId);
+            return userId;
+        } catch (error) {
+            console.error('Error fetching user ID:', error);
+            showMessage('Error fetching user ID. Please log in again.', 'error');
+            return null;
+        }
+    }
+
+    async function ensureUserId() {
+        userEmail = localStorage.getItem('userEmail'); // Refresh email
+        if (!userId || userEmail !== localStorage.getItem('lastLoggedInEmail')) {
+            userId = await fetchUserId(userEmail);
+            if (userId) {
+                localStorage.setItem('lastLoggedInEmail', userEmail);
+            }
+        }
+        return userId;
+    }
+
+    // Initialize the page
+    async function initPage() {
+        await ensureUserId();
+        userName = localStorage.getItem('userName'); // Refresh username
+        document.getElementById('userName').innerText = userName || 'User';
+        fetchSubjects();
+        fetchSubjectMarks();
+    }
+
+    // Call initPage when the page loads and after login
+    initPage();
+
+    // Add a login function (this is a mock function, replace with your actual login logic)
+    async function login(email, password) {
+        // Perform login logic here
+        // If login is successful:
+        localStorage.setItem('userEmail', email);
+        localStorage.setItem('userName', 'User Name'); // Set the actual user name
+        localStorage.removeItem('userId'); // Clear the old userId
+        userId = null; // Reset userId in memory
+        await initPage(); // Re-initialize the page with new user data
+    }
+   
+    // Add logout function
+    function logout() {
+        localStorage.removeItem('userEmail');
+        localStorage.removeItem('userName');
+        localStorage.removeItem('userId');
+        localStorage.removeItem('lastLoggedInEmail');
+        userId = null;
+        location.reload(); // Reload the page to reset the state
+    }
+
+    addMarksForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const currentUserId = await ensureUserId();
+        if (!currentUserId) {
+            showMessage('User ID is not set. Please log in again.', 'error');
+            return;
+        }
+        const subjectId = subjectSelect.value;
+        const enteredMarks = subjectMarks.value;
+
+        if (!subjectId || !enteredMarks) {
+            showMessage('Please select a subject and enter marks.', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('http://localhost:5000/addMarks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'user-email': userEmail
+                },
+                body: JSON.stringify({ subjectId, marks: enteredMarks, userId: currentUserId })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText);
+            }
+
+            showMessage('Marks submitted successfully!', 'success');
+            fetchSubjectMarks();
+        } catch (error) {
+            showMessage(`Error: ${error.message}`, 'error');
+        }
+    });
+
+    document.getElementById('searchCoursesButton').addEventListener('click', async () => {
+        console.log("Search Courses Button Clicked");
+        const currentUserId = await ensureUserId();
+        console.log("User ID:", currentUserId);
+
+        if (!currentUserId) {
+            showMessage('User ID is not set. Please log in again.', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`http://localhost:5000/api/eligible-courses/${currentUserId}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch eligible courses');
+            }
+
+            const eligibleCourses = await response.json();
+            localStorage.setItem('eligibleCourses', JSON.stringify(eligibleCourses));
+            displayCourses(eligibleCourses);
+            showMessage('Courses fetched successfully!', 'success');
+        } catch (error) {
+            showMessage(`Error: ${error.message}`, 'error');
+        }
+    });
+
+    function displayQualifiedCoursesCount(count) {
+        const qualifiedCoursesCount = document.getElementById('qualifiedCoursesCount');
+        qualifiedCoursesCount.innerHTML = `You qualify for ${count} courses.`;
+    }
+    document.getElementById('showResultsButton').addEventListener('click', () => {
+        window.location.href = 'results.html';
+    });
+
+
+
+    function fetchSubjects() {
+        fetch(`http://localhost:5000/get-subjects?email=${userEmail}`)
+            .then(response => response.json())
+            .then(subjects => {
+                subjectSelect.innerHTML = '';
+                subjects.forEach(subject => {
+                    const option = document.createElement('option');
+                    option.value = subject.id;
+                    option.textContent = subject.name;
+                    subjectSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching subjects:', error);
+                showMessage(`Error fetching subjects: ${error.message}`, 'error');
+            });
+    }
+   
+    let isFetching = false;
+
+    function fetchSubjectMarks() {
+        if (isFetching) {
+            console.log('Fetch already in progress, skipping');
+            return;
+        }
+    
+        isFetching = true;
+        console.log('fetchSubjectMarks called');
+    
+        subjectList.innerHTML = ''; 
+    
+        fetch(`http://localhost:5000/get-marks?email=${userEmail}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('Marks data received:', data);
+                
+                // Check for duplicates
+                const uniqueSubjects = new Set();
+                const uniqueData = data.filter(mark => {
+                    const key = `${mark.subject_id}-${mark.subject_name}`;
+                    if (uniqueSubjects.has(key)) {
+                        console.warn(`Duplicate subject detected: ${mark.subject_name}`);
+                        return false;
+                    }
+                    uniqueSubjects.add(key);
+                    return true;
+                });
+    
+                console.log('Unique data:', uniqueData);
+    
+                uniqueData.forEach(mark => {
+                    console.log('Rendering mark:', mark);
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${mark.subject_name}</td>
+                        <td>${mark.marks}%</td>
+                        <td>
+                            <button class="remove-btn" data-subject-id="${mark.subject_id}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </td>
+                    `;
+                    subjectList.appendChild(row);
+                });
+    
+                document.querySelectorAll('.remove-btn').forEach(btn => {
+                    btn.addEventListener('click', deleteSubjectMark);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching marks:', error);
+                showMessage(`Error fetching marks: ${error.message}`, 'error');
+            })
+            .finally(() => {
+                isFetching = false;
+            });
+    }
+    function displayCourses(courses) {
+        //const coursesContainer = document.getElementById('coursesContainer');
+        //const qualifiedCoursesCount = document.getElementById('qualifiedCoursesCount');
+
+        //coursesContainer.innerHTML = '';
+
+        qualifiedCoursesCount.innerHTML = `You qualify for ${courses.length} courses.`;
+
+        if (courses.length === 0) {
+            coursesContainer.innerHTML = '<p>No eligible courses found.</p>';
+            return;
+        }
+
+        courses.forEach(course => {
+            const courseElement = document.createElement('div');
+            courseElement.classList.add('course');
+            courseElement.innerHTML = `
+                <h3>${course.course_name}</h3>
+                <p>${course.university_name}</p>
+            `;
+            coursesContainer.appendChild(courseElement);
+        });
+    }
+
+
+    async function deleteSubjectMark(event) {
+        const subjectId = event.currentTarget.getAttribute('data-subject-id');
+        console.log('Attempting to delete subject with subjectId:', subjectId); // Log subjectId
+        
+        const currentUserId = await ensureUserId();
+        console.log('Current user ID:', currentUserId); // Log currentUserId
+        
+        if (!currentUserId) {
+            showMessage('User ID is not set. Please log in again.', 'error');
+            return;
+        }
+    
+        // Check if subjectId is valid
+        if (!subjectId || subjectId === 'undefined') {
+            showMessage('Invalid subject ID. Cannot delete marks.', 'error');
+            return;
+        }
+    
+        try {
+            const response = await fetch('http://localhost:5000/deleteMarks', {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'user-email': userEmail
+                },
+                body: JSON.stringify({ subjectId: parseInt(subjectId) })
+            });
+    
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || 'Failed to delete subject marks');
+            }
+    
+            const result = await response.json();
+            showMessage(result.message || 'Subject marks deleted successfully!', 'success');
+            fetchSubjectMarks(); // Refresh the subject list
+        } catch (error) {
+            console.error('Error deleting subject marks:', error);
+            showMessage(`Error: ${error.message}`, 'error');
+        }
+    }
+
+
+    addMarksForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const currentUserId = await ensureUserId();
+        if (!currentUserId) {
+            showMessage('User ID is not set. Please log in again.', 'error');
+            return;
+        }
+        const subjectId = subjectSelect.value;
+        const enteredMarks = subjectMarks.value;
+
+        if (!subjectId || !enteredMarks) {
+            showMessage('Please select a subject and enter marks.', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('http://localhost:5000/addMarks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'user-email': userEmail
+                },
+                body: JSON.stringify({ subjectId, marks: enteredMarks })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(errorText);
+            }
+
+            showMessage('Marks submitted successfully!', 'success');
+            fetchSubjectMarks();
+        } catch (error) {
+            showMessage(`Error: ${error.message}`, 'error');
+        }
+    });
+
+    function showMessage(message, type) {
+        const messageDiv = document.getElementById('message');
+        messageDiv.innerHTML = `<p class="${type}">${message}</p>`;
+    }
+});
+
+
+
+script js
+// Function to show home page
+function showHomePage() {
+    document.getElementById('home').style.display = 'block';
+    document.getElementById('stream-info').style.display = 'none';
+    document.getElementById('bursaries-info').style.display = 'none';
+    document.getElementById('register-form').style.display = 'none';
+}
+
+// Function to show streams info
+function viewStreams() {
+    document.getElementById('home').style.display = 'none';
+    document.getElementById('stream-info').style.display = 'block';
+    document.getElementById('bursaries-info').style.display = 'none';
+    document.getElementById('register-form').style.display = 'none';
+}
+
+// Function to show bursaries info
+function viewBursaries() {
+    document.getElementById('home').style.display = 'none';
+    document.getElementById('stream-info').style.display = 'none';
+    document.getElementById('bursaries-info').style.display = 'block';
+    document.getElementById('register-form').style.display = 'none';
+}
+
+// Function to show register form
+function showRegisterForm() {
+    document.getElementById('home').style.display = 'none';
+    document.getElementById('stream-info').style.display = 'none';
+    document.getElementById('bursaries-info').style.display = 'none';
+    document.getElementById('register-form').style.display = 'block';
+    document.getElementById('signupForm').style.display = 'block';
+    document.getElementById('loginForm').style.display = 'none';
+    document.getElementById('formTitle').textContent = 'Register Form';
+    document.getElementById('toggleLink').textContent = 'Already have an account? Login';
+}
+
+// Toggling between signup and login forms
+document.getElementById('toggleLink').addEventListener('click', function(e) {
+    e.preventDefault();
+    const signupForm = document.getElementById('signupForm');
+    const loginForm = document.getElementById('loginForm');
+    const formTitle = document.getElementById('formTitle');
+
+    if (signupForm.style.display === 'none') {
+        signupForm.style.display = 'block';
+        loginForm.style.display = 'none';
+        formTitle.textContent = 'Register Form';
+        this.textContent = 'Already have an account? Login';
+    } else {
+        signupForm.style.display = 'none';
+        loginForm.style.display = 'block';
+        formTitle.textContent = 'Login Form';
+        this.textContent = "Don't have an account? Register";
+    }
+});
+
+// Register form submission
+document.getElementById('signupForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const name = document.getElementById('name').value;
+    const surname = document.getElementById('surname').value;
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+
+    fetch('http://localhost:5000/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, surname, email, password })
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('message').innerHTML = `<p class="success">${data.message}</p>`;
+    })
+    .catch(error => {
+        document.getElementById('message').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+        console.error('Error:', error);
+    });
+});
+
+// Login form submission
+document.getElementById('loginForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+
+    fetch('http://localhost:5000/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.message === 'Login successful!') {
+            // Store the user's email in localStorage
+            localStorage.setItem('userEmail', email);
+            // Redirect to add_subject.html on successful login
+            window.location.href = 'add_subject.html';
+        } else {
+            document.getElementById('message').innerHTML = `<p class="error">${data.message}</p>`;
+        }
+    })
+    .catch(error => {
+        document.getElementById('message').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+        console.error('Error:', error);
+    });
+});
+
+// Add subject form submission (if this page exists in your application)
+if (document.getElementById('addSubjectForm')) {
+    document.getElementById('addSubjectForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const subjectName = document.getElementById('subjectName').value;
+        const subjectMarks = document.getElementById('subjectMarks').value;
+
+        fetch('http://localhost:5000/addSubjects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subjectName, subjectMarks })
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(data => { throw new Error(data.message); });
+            }
+            return response.json();
+        })
+        .then(data => {
+            document.getElementById('message').innerHTML = `<p class="success">${data.message}</p>`;
+        })
+        .catch(error => {
+            document.getElementById('message').innerHTML = `<p class="error">Error: ${error.message}</p>`;
+            console.error('Error:', error);
+        });
+    });
+}
+
+// Function to return to home page (for use in stream and bursaries info pages)
+function returnToHome() {
+    showHomePage();
+}
+
+window.onload = showHomePage;
+
+results js
+document.addEventListener('DOMContentLoaded', function () {
+    const universityContainer = document.getElementById('universityContainer');
+    const emptyMessage = document.getElementById('emptyMessage');
+    const qualifiedCourses = JSON.parse(localStorage.getItem('eligibleCourses'));
+
+    const universityData = {
+        "University of Cape Town": {
+            link: "https://publicaccess.uct.ac.za/psc/public/EMPLOYEE/SA/c/UCT_PUBLIC_MENU.UCT_ONL_HOME_FL.GBL?PAGE=UCT_ONL_ACC_FL",
+            courses: []
+        },
+        "University of the Witwatersrand": {
+            link: "https://self-service.wits.ac.za/psc/csprodonl/UW_SELF_SERVICE/SA/c/VC_OA_LOGIN_MENU.VC_OA_LOGIN_FL.GBL?",
+            courses: []
+        },
+        "Stellenbosch University": { link: "https://student.sun.ac.za/applicant-portal/#/auth/login", courses: [] },
+        "University of KwaZulu-Natal": { link: "https://erpweb.ukzn.ac.za/pls/ukznint/gen.gw1pkg.gw1view ", courses: [] },
+        "University of Pretoria": { link: "https://upnet.up.ac.za/psc/upapply/EMPLOYEE/SA/c/UP_OAP_MENU.UP_OAP_LOGIN_FL.GBL?& ", courses: [] },
+        "University of the Free State": { link: "https://apply.ufs.ac.za/Application/SelectionInformation ", courses: [] },
+        "University of Johannesburg": { link: "https://registration.uj.ac.za/pls/prodi41/gen.gw1pkg.gw1view ", courses: [] },
+        "University of Limpopo": { link: "https://ulc-prod-webserver.ul.ac.za/pls/prodi41/gen.gw1pkg.gw1view ", courses: [] },
+        "Nelson Mandela University": { link: "https://apps.mandela.ac.za/e-portal ", courses: [] },
+        "North-West University": { link: "https://applynow.nwu.ac.za/OnlineApplication/ ", courses: [] },
+        "Rhodes University": { link: "https://ross.ru.ac.za/ ", courses: [] },
+        "University of South Africa": { link: "https://myadmin.unisa.ac.za/portal/xlogin ", courses: [] },
+        "Walter Sisulu University": { link: "https://applications.wsu.ac.za/ ", courses: [] },
+        "University of Zululand": { link: "https://www.cao.ac.za/IDLookup.aspx ", courses: [] },
+        "University of Venda": { link: "https://www.cao.ac.za/IDLookup.aspx ", courses: [] },
+        "Sol Plaatje University": { link: "https://www.spu.ac.za/index.php/how-to-apply/ ", courses: [] },
+        "Sefako Makgatho Health & Sciences University": { link: "https://onlineapplication.smu.ac.za/pls/prodi41/gen.gw1pkg.gw1view ", courses: [] }
+    };
+
+    if (qualifiedCourses && qualifiedCourses.length > 0) {
+        // Group courses by university
+        qualifiedCourses.forEach(course => {
+            if (universityData[course.university_name]) {
+                universityData[course.university_name].courses.push(course.course_name);
+            }
+        });
+
+        // Create dropdown for each university in the specified order
+        Object.entries(universityData).forEach(([university, data]) => {
+            const courses = data.courses;
+            if (courses.length > 0) {
+                const universityDiv = document.createElement('div');
+                universityDiv.classList.add('university-dropdown');
+
+                const dropdownButton = document.createElement('button');
+                dropdownButton.className = 'dropdown-button';
+                dropdownButton.innerText = university;
+
+                const courseList = document.createElement('div');
+                courseList.className = 'course-list';
+                courseList.style.display = 'none';
+
+                const link = document.createElement('a');
+                link.href = data.link;
+                link.target = '_blank'; // Open link in new tab
+                link.innerText = "Application Link";
+                link.className = 'application-link';
+
+                courses.forEach(course => {
+                    const courseItem = document.createElement('div');
+                    courseItem.className = 'course-item';
+                    courseItem.innerText = course;
+                    courseList.appendChild(courseItem);
+                });
+
+                dropdownButton.onclick = () => {
+                    const isDisplayed = courseList.style.display === 'block';
+                    courseList.style.display = isDisplayed ? 'none' : 'block';
+                    link.style.display = isDisplayed ? 'none' : 'block'; // Toggle link visibility
+                };
+
+                universityDiv.appendChild(dropdownButton);
+                universityDiv.appendChild(link); // Add application link to university div
+                universityDiv.appendChild(courseList);
+                universityContainer.appendChild(universityDiv);
+            }
+        });
+    } else {
+        emptyMessage.style.display = 'block';
+    }
+});
+
+add_subject html 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMATricApp - Add Subjects</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #f39c12;
+            --background-color: #f4f7f6;
+            --text-color: #333;
+            --card-bg: #ffffff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 30px;
+            background-color: var(--card-bg);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        h1, h2 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        #greeting {
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            text-align: center;
+            color: var(--secondary-color);
+        }
+
+        form {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        select, input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background-color: #3a7bd5;
+            transform: translateY(-2px);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 10px;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            background-color: #f0f0f0;
+        }
+
+        th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 600;
+        }
+
+        tr {
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border-radius: 6px;
+            transition: transform 0.2s;
+        }
+
+        tr:hover {
+            transform: translateY(-2px);
+        }
+
+        td:first-child, th:first-child {
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }
+
+        td:last-child, th:last-child {
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+        }
+
+        .remove-btn {
+            color: #e74c3c;
+            cursor: pointer;
+            transition: color 0.3s;
+            background: none;
+            border: none;
+            font-size: 18px;
+            padding: 0;
+            margin-left: 10px;
+        }
+
+        .remove-btn:hover {
+            color: #c0392b;
+        }
+
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+        }
+
+        .toggle-link {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .toggle-link a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s;
+        }
+
+        .toggle-link a:hover {
+            color: var(--secondary-color);
+        }
+
+        #message, #addSubjectMessage {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        #qualifiedCoursesCount {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="greeting">Welcome, <span id="userName"></span>!</h1>
+
+        <div id="message"></div>
+
+        <h2>📚 Add Your Subject Marks</h2>
+
+        <form id="addMarksForm">
+            <label for="subjectSelect">📘 Select Subject:</label>
+            <select id="subjectSelect" required>
+                <option value="" disabled selected>Choose your subject</option>
+                <!-- Options will be populated dynamically -->
+            </select>
+            <label for="subjectMarks">🎯 Your Score (%):</label>
+            <input type="number" id="subjectMarks" placeholder="Enter your percentage" min="0" max="100" required />
+            <button type="submit">Add Subject <i class="fas fa-plus-circle"></i></button>
+        </form>
+
+        <div id="addSubjectMessage"></div>
+
+        <div id="subjectsContainer">
+            <h2>🏆 Your Academic Progress</h2>
+            <table id="subjectTable">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Score</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="subjectList">
+                    <!-- Table rows will be populated dynamically -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="button-container">
+            <button id="searchCoursesButton">🔍 Explore Courses</button>
+            <button id="showResultsButton">📊 View Results</button>
+        </div>
+
+        <div id="qualifiedCoursesCount"></div>
+
+        <div class="toggle-link">
+            <a href="index.html">🚪 Logout</a>
+        </div>
+    </div>
+
+    <script src="add_subjects.js"></script>
+</body>
+</html>
+
+index html 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMATricApp</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>SAMATricApp</h2>
+        <ul>
+            <li><a href="#" onclick="showHomePage()"><i class='bx bx-home'></i> Home</a></li>
+            <li><a href="#" onclick="viewStreams()"><i class='bx bx-book-reader'></i> Streams Info</a></li>
+            <li><a href="#" onclick="viewBursaries()"><i class='bx bx-money'></i> Bursaries Info</a></li>
+            <li><a href="#" onclick="showRegisterForm()"><i class='bx bx-user-plus'></i> Register</a></li>
+        </ul>
+    </div>
+
+    <div class="main-content">
+        <!-- Home Page Content -->
+        <div id="home">
+            <header class="home-header">
+                <h1>Welcome to SAMATricApp</h1>
+                <p>Your ultimate guide to choosing the right career path based on your matric subjects and grades.</p>
+            </header>
+            <div class="home-container">
+                <p>SAMATricApp helps Grade 12 learners discover which university courses they qualify for, along with relevant insights to help make informed decisions.</p>
+                <div class="motivation-section">
+                    <h2>Stay Inspired!</h2>
+                    <blockquote>
+                        <p>"The future belongs to those who believe in the beauty of their dreams." - Eleanor Roosevelt</p>
+                    </blockquote>
+                    <blockquote>
+                        <p>"Your education is a dress rehearsal for a life that is yours to lead." - Nora Ephron</p>
+                    </blockquote>
+                    <blockquote>
+                        <p>"Success is not the key to happiness. Happiness is the key to success. If you love what you are doing, you will be successful." - Albert Schweitzer</p>
+                    </blockquote>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stream Info Section (Initially hidden) -->
+        <div id="stream-info" style="display: none;">
+            <h2>Stream Information</h2>
+            <p>Select a stream that aligns with your interests and future career aspirations:</p>
+            <div class="form-group">
+                <div class="stream">
+                    <h3>Science Stream</h3>
+                    <p>The Science stream focuses on subjects like Mathematics, Physical Science, and Life Sciences. Students who enjoy problem-solving and understanding the natural world often thrive here.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Doctor</li>
+                        <li>Engineer</li>
+                        <li>Pharmacist</li>
+                        <li>Scientist</li>
+                        <li>Environmental Specialist</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Commerce Stream</h3>
+                    <p>The Commerce stream includes subjects such as Accounting, Economics, and Business Studies. It is ideal for students who are interested in finance, trade, and the business world.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Accountant</li>
+                        <li>Economist</li>
+                        <li>Business Manager</li>
+                        <li>Financial Analyst</li>
+                        <li>Entrepreneur</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Humanities (Arts) Stream</h3>
+                    <p>The Humanities stream covers subjects such as History, Geography, and Languages. It’s perfect for students who are interested in social sciences, culture, and human behavior.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Journalist</li>
+                        <li>Psychologist</li>
+                        <li>Teacher</li>
+                        <li>Lawyer</li>
+                        <li>Social Worker</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Technical Stream</h3>
+                    <p>The Technical stream includes practical subjects like Engineering Graphics and Design (EGD), Mechanical Technology, and Electrical Technology. It is suited for students who have a knack for hands-on work and technology.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Technician</li>
+                        <li>Electrician</li>
+                        <li>Mechanic</li>
+                        <li>Construction Manager</li>
+                        <li>Architect</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Agricultural Stream</h3>
+                    <p>The Agricultural stream focuses on subjects like Agricultural Sciences and Agricultural Management Practices. It is ideal for students interested in farming, sustainability, and managing natural resources.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Agronomist</li>
+                        <li>Farm Manager</li>
+                        <li>Veterinarian</li>
+                        <li>Environmental Scientist</li>
+                        <li>Food Scientist</li>
+                    </ul>
+                </div>
+                <div class="stream">
+                    <h3>Hospitality Stream</h3>
+                    <p>This stream focuses on Hospitality Studies, Consumer Studies, and related fields. It’s perfect for students who want to work in the food, lodging, or tourism industries.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Chef</li>
+                        <li>Hotel Manager</li>
+                        <li>Event Coordinator</li>
+                        <li>Restaurant Manager</li>
+                        <li>Travel Consultant</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Arts & Culture Stream</h3>
+                    <p>This stream is designed for students who are passionate about creative subjects such as Drama, Music, Visual Arts, and Dance. It is perfect for those interested in pursuing careers in the creative industry.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Artist</li>
+                        <li>Musician</li>
+                        <li>Actor/Actress</li>
+                        <li>Fashion Designer</li>
+                        <li>Graphic Designer</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Information Technology (IT) Stream</h3>
+                    <p>The IT stream focuses on Computer Science, Information Technology, and related subjects. It’s ideal for students who are interested in technology, coding, and digital solutions.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Software Developer</li>
+                        <li>Web Developer</li>
+                        <li>Network Engineer</li>
+                        <li>Data Analyst</li>
+                        <li>Cybersecurity Specialist</li>
+                    </ul>
+                </div>
+                <div class="stream">
+                    <h3>Health and Social Care Stream</h3>
+                    <p>This stream is suited for students interested in health, well-being, and social care services. It focuses on healthcare studies, child development, and community care.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Nurse</li>
+                        <li>Social Worker</li>
+                        <li>Occupational Therapist</li>
+                        <li>Childcare Worker</li>
+                        <li>Healthcare Assistant</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Tourism Stream</h3>
+                    <p>The Tourism stream prepares students for careers in the tourism and hospitality industry. Subjects include Travel and Tourism Studies, Business Studies, and Hospitality Studies.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Travel Agent</li>
+                        <li>Tour Guide</li>
+                        <li>Event Planner</li>
+                        <li>Tourism Manager</li>
+                        <li>Hotel Manager</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Engineering and Technology Stream</h3>
+                    <p>This stream focuses on advanced technical subjects such as Electrical Technology, Mechanical Technology, and Civil Technology, preparing students for engineering careers.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Civil Engineer</li>
+                        <li>Mechanical Engineer</li>
+                        <li>Electrical Engineer</li>
+                        <li>Architect</li>
+                        <li>Industrial Engineer</li>
+                    </ul>
+                </div>
+        
+                <div class="stream">
+                    <h3>Sports Science Stream</h3>
+                    <p>The Sports Science stream is designed for students interested in physical education, fitness, and sports management. It combines biology, physical education, and sports theory.</p>
+                    <p><strong>Potential Careers:</strong></p>
+                    <ul>
+                        <li>Sports Coach</li>
+                        <li>Fitness Trainer</li>
+                        <li>Sports Physiotherapist</li>
+                        <li>Sports Scientist</li>
+                        <li>Sports Manager</li>
+                    </ul>
+                </div>
+            <button onclick="returnToHome()">Back to Home</button>
+			</div>
+   
+        </div>
+
+        <!-- Bursaries Info Section (Initially hidden) -->
+        <div id="bursaries-info" style="display: none;">
+            <h2>Bursaries Information</h2>
+            <p>Explore available bursaries to help fund your education:</p>
+            <ul>
+                <li>
+                    <strong>NSFAS (National Student Financial Aid Scheme)</strong>
+                    <p>NSFAS provides financial assistance to eligible students at public universities and TVET colleges.</p>
+                    <a href="https://www.nsfas.org.za/" target="_blank">Visit NSFAS</a>
+                </li>
+                <li>
+                    <strong>Funza Lushaka Bursary Programme</strong>
+                    <p>This bursary is available to students pursuing a teaching qualification.</p>
+                    <a href="http://www.funzalushaka.doe.gov.za/" target="_blank">Visit Funza Lushaka</a>
+                </li>
+                <li>
+                    <strong>Allan Gray Orbis Foundation</strong>
+                    <p>Provides financial support to students with leadership potential in entrepreneurship.</p>
+                    <a href="https://www.allangrayorbis.org/" target="_blank">Visit Allan Gray Orbis Foundation</a>
+                </li>
+                <li>
+                    <strong>Thuthuka Bursary Fund</strong>
+                    <p>This bursary is available for students studying towards becoming Chartered Accountants (CA).</p>
+                    <a href="https://www.saica.co.za/Thuthuka/" target="_blank">Visit Thuthuka Bursary</a>
+                </li>
+                <li>
+                    <strong>Mintek Bursary Programme</strong>
+                    <p>Mintek offers bursaries to students interested in pursuing a career in the minerals and metallurgy field.</p>
+                    <a href="https://www.mintek.co.za/" target="_blank">Visit Mintek</a>
+                </li>
+                <li>
+                    <strong>Vodacom Bursary Programme</strong>
+                    <p>Vodacom offers bursaries for students studying in ICT and engineering fields.</p>
+                    <a href="https://www.vodacom.com/bursaries.php" target="_blank">Visit Vodacom Bursary</a>
+                </li>
+                <li>
+                    <strong>Hulamin Bursary</strong>
+                    <p>This bursary is available to students in the fields of metallurgy, chemical, industrial, mechanical, and electrical engineering.</p>
+                    <a href="https://www.hulamin.com/careers/bursary-programme" target="_blank">Visit Hulamin Bursary</a>
+                </li>
+                <li>
+                    <strong>SASOL Bursary Scheme</strong>
+                    <p>Sasol offers bursaries for students pursuing qualifications in engineering, science, and technology fields</p>
+                    <a href="https://www.sasolbursaries.com/welcome/" target="_blank">Visit SASOL Bursary Scheme</a>
+                </li>
+                <li>
+                    <p>Please find more Bursaries on this website.</p><a href="https://www.zabursaries.co.za/">Visit SA Bursaries for info</a>
+                </li>
+            </ul>
+            <button onclick="returnToHome()">Back to Home</button>
+        </div>
+
+        <!-- Register/Login Form (Initially hidden) -->
+        <div id="register-form" class="form-container" style="display: none;">
+            <h1 id="formTitle">Register Form</h1>
+            
+            <div id="message"></div>
+    
+            <form id="signupForm">
+                <input type="text" id="name" placeholder="Name" required><br>
+                <input type="text" id="surname" placeholder="Surname" required><br>
+                <input type="email" id="email" placeholder="Email" required><br>
+                <input type="password" id="password" placeholder="Password" required><br>
+                <button type="submit">Register</button>
+            </form>
+    
+            <form id="loginForm" style="display: none;">
+                <input type="email" id="loginEmail" placeholder="Email" required><br>
+                <input type="password" id="loginPassword" placeholder="Password" required><br>
+                <button type="submit">Login</button>
+            </form>
+    
+            <div class="toggle-link">
+                <a href="#" id="toggleLink">Already have an account? Login</a>
+            </div>
+        </div>
+
+        <footer>
+            <div class="features">
+                <h3>Why Choose SAMATricApp?</h3>
+                <ul>
+                    <li><i class='bx bx-check-circle'></i> Personalized course suggestions based on your subjects and marks.</li>
+                    <li><i class='bx bx-check-circle'></i> Detailed descriptions of courses to help you make informed decisions.</li>
+                    <li><i class='bx bx-check-circle'></i> Direct links to university application forms for easy access.</li>
+                    <li><i class='bx bx-check-circle'></i> Information on available bursaries and scholarships.</li>
+                    <li><i class='bx bx-check-circle'></i> Guidance for Grade 10 learners on selecting streams that align with future careers.</li>
+                </ul>
+            </div>
+            <p>&copy; 2024 SAMATricApp</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
+results /html 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMATricApp - Qualified Courses</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="results.css">
+</head>
+<body>
+    <div class="container">
+        <h1 id="greeting">Your Qualified Courses</h1>
+
+        <div id="message"></div>
+
+        <div id="universityContainer" class="university-list"></div>
+
+        <div id="emptyMessage" class="empty-message" style="display: none;">
+            No courses found. Please ensure your marks are correct.
+        </div>
+
+        <div class="button-container">
+            <a href="add_subject.html" class="back-button">
+                <i class="fas fa-arrow-left"></i> Back to Add Subjects
+            </a>
+        </div>
+
+        <div class="toggle-link">
+            <a href="index.html"><i class="fas fa-sign-out-alt"></i> Logout</a>
+        </div>
+    </div>
+
+    <script src="results.js"></script>
+</body>
+</html>
+
+results css 
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+:root {
+    --primary-color: #4a90e2;
+    --secondary-color: #f39c12;
+    --background-color: #f4f7f6;
+    --text-color: #333;
+    --card-bg: #ffffff;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 30px;
+    background-color: var(--card-bg);
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+}
+
+h1 {
+    color: var(--primary-color);
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 2.5em;
+}
+
+#message {
+    margin: 20px 0;
+    padding: 15px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.university-list {
+    margin-top: 30px;
+}
+
+.university-dropdown {
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.dropdown-button {
+    width: 100%;
+    padding: 15px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.dropdown-button:hover {
+    background-color: #3a7bd5;
+}
+
+.course-list {
+    padding: 15px;
+    background-color: #f9f9f9;
+}
+
+.course-item {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.3s;} 
+
+styles css
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+/* Sidebar styles */
+.sidebar {
+    width: 250px;
+    height: 100vh;
+    background-color: #2c3e50;
+    color: white;
+    position: fixed;
+    padding: 20px;
+}
+
+.sidebar h2 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.sidebar ul {
+    list-style: none;
+}
+
+.sidebar ul li {
+    margin: 15px 0;
+}
+
+.sidebar ul li a {
+    color: white;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    transition: background 0.3s;
+}
+
+.sidebar ul li a:hover {
+    background-color: #34495e;
+}
+
+.sidebar .dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #34495e;
+    min-width: 200px;
+    z-index: 1;
+}
+
+.sidebar .dropdown:hover .dropdown-content {
+    display: block;
+}
+
+/* Main content styles */
+.main-content {
+    margin-left: 270px; /* Offset for sidebar */
+    padding: 20px;
+}
+
+.form-container {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+h2 {
+    margin-bottom: 15px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+button {
+    background-color: #2980b9;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background-color: #3498db;
+}
+header {
+    background-color: #2c3e50;
+    color: white ;
+    text-align: center;
+}
+.home-header p{
+    color: #ccc;
+}
+
+/* Footer styles */
+footer {
+    background-color: #2c3e50;
+    color: white;
+    text-align: center;
+    padding: 10px 0;
+    margin-top: 20px;
+    position: relative;
+    bottom: 0;
+    width: 100%;
+}
+
+.features {
+    margin: 20px 0;
+}
+
+.features h3 {
+    margin-bottom: 10px;
+}
+
+.features ul {
+    list-style: none;
+}
+
+.features ul li {
+    margin: 5px 0;
+    color: #ccc;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 200px;
+    }
+
+    .main-content {
+        margin-left: 220px;
+    }
+}
+.social-btn {
+    display: flex;
+    align-items: center;
+    background-color: #f4f4f9;
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 10px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.social-btn:hover {
+    background-color: #ececec;
+}
+
+.social-btn img {
+    margin-right: 8px;
+}
+/* General styles */
+.home-container {
+    font-family: 'Arial', sans-serif;
+    background-image: url('https://s3.wp.wsu.edu/uploads/sites/90/2015/08/EDUCATION-text.jpg'); /* Replace with the actual path to your image */
+    background-size: cover; /* Ensures the image covers the entire container */
+    background-position: center; /* Centers the image */
+    color: white; /* Change the text color for better visibility */
+    padding: 20px; /* Add some padding */
+    border-radius: 8px; /* Optional: add rounded corners */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Optional: add a shadow for depth */
+    margin-bottom: 0px;
+    
+    color: #333;
+}
+
+h2 {
+    color: #116ae6;
+    font-size: 2em;
+    margin-bottom: 10px;
+}
+
+p {
+    font-size: 1.1em;
+    color: #555;
+}
+
+/*strean and bursaries info*/
+
+.container {
+    width: 80%;
+    margin: 30px auto;
+    padding: 20px;
+    background-color: #fff;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    border-radius: 10px;
+}
+h2 {
+    color: #0047AB;
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 2.2em;
+}
+p {
+    color: #555;
+    line-height: 1.6;
+}
+
+.form-group {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+
+.stream, .bursary {
+    background-color: #f9f9f9;
+    padding: 20px;
+    margin: 10px;
+    width: calc(48% - 20px);
+    border-left: 5px solid #0047AB;
+    border-radius: 10px;
+    transition: all 0.3s ease;
+}
+
+.stream:hover, .bursary:hover {
+    background-color: #f1f1f1;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.15);
+    transform: translateY(-5px);
+}
+
+.stream h3, .bursary strong {
+    color: #0047AB;
+    margin-bottom: 10px;
+    font-size: 1.8em;
+}
+
+ul {
+    margin-left: 20px;
+    list-style-type: disc;
+    color: #333;
+}
+
+ul li {
+    margin: 5px 0;
+}
+
+a {
+    color: #00C6FF;
+    text-decoration: none;
+    font-weight: bold;
+    transition: color 0.2s ease-in-out;
+}
+
+a:hover {
+    color: #0047AB;
+    text-decoration: underline;
+}
+
+.button {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #0047AB;
+    color: white;
+    text-align: center;
+    border-radius: 5px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 20px;
+}
+
+.button:hover {
+    background-color: #003580;
+}
+
+/* Stream Section */
+#stream-info {
+    display: none;
+}
+
+/* Bursary Section */
+#bursaries-info {
+    display: none;
+}
+
+@media screen and (max-width: 768px) {
+    .stream, .bursary {
+        width: 100%;
+        margin-bottom: 20px;
+    }
+}
+
+/* Header Styling */
+
+.home-container p {
+    margin-bottom: 20px;
+    line-height: 1.6;
+    color: #00C6FF;
+}
+
+
+.motivation-section blockquote {
+    margin: 15px 0;
+    padding: 10px 20px;
+    /* Blue accent line */
+     /* Light gray background for quotes */
+    border-radius: 4px;
+    
+    font-style: italic;
+}
+
+.motivation-section blockquote p {
+    line-height: 1.4;
+    color: #00C6FF; /* Darker color for quote text */
+}
+
+.motivation-section h2 {
+    color: #00C6FF;
+}
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f4f4f4;
+    color: #333;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 800px;
+    margin: 20px auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+h1, h2 {
+    color: #0047AB;
+    margin-bottom: 20px;
+}
+
+form {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+select, input[type="number"] {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+button {
+    background-color: #0047AB;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+button:hover {
+    background-color: #003380;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+
+.remove-btn {
+    color: #ff4136;
+    cursor: pointer;
+}
+
+.button-container {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+.toggle-link {
+    text-align: center;
+    margin-top: 20px;
+}
+
+.toggle-link a {
+    color: #0047AB;
+    text-decoration: none;
+}
+
+#message, #addSubjectMessage {
+    margin: 10px 0;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Register/Login Form Styles */
+.form-container {
+    background-color: var(--card-bg, #ffffff);
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    padding: 30px;
+    max-width: 400px;
+    margin: 40px auto;
+}
+
+.form-container h1 {
+    color: var(--primary-color, #4a90e2);
+    font-size: 2em;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+#message {
+    margin: 15px 0;
+    padding: 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.form-container form {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-container input {
+    margin-bottom: 15px;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 16px;
+    transition: border-color 0.3s;
+}
+
+.form-container input:focus {
+    outline: none;
+    border-color: var(--primary-color, #4a90e2);
+}
+
+.form-container button {
+    background-color: var(--primary-color, #4a90e2);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.2s;
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 10px;
+}
+
+.form-container button:hover {
+    background-color: var(--secondary-color, #f39c12);
+    transform: translateY(-2px);
+}
+
+.toggle-link {
+    text-align: center;
+    margin-top: 20px;
+}
+
+.toggle-link a {
+    color: var(--primary-color, #4a90e2);
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.3s;
+}
+
+.toggle-link a:hover {
+    color: var(--secondary-color, #f39c12);
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+    .form-container {
+        padding: 20px;
+        margin: 20px auto;
+    }
+
+    .form-container h1 {
+        font-size: 1.5em;
+    }
+}

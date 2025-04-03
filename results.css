@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+:root {
+    --primary-color: #4a90e2;
+    --secondary-color: #f39c12;
+    --background-color: #f4f7f6;
+    --text-color: #333;
+    --card-bg: #ffffff;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 900px;
+    margin: 40px auto;
+    padding: 30px;
+    background-color: var(--card-bg);
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+}
+
+h1 {
+    color: var(--primary-color);
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 2.5em;
+}
+
+#message {
+    margin: 20px 0;
+    padding: 15px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.university-list {
+    margin-top: 30px;
+}
+
+.university-dropdown {
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.dropdown-button {
+    width: 100%;
+    padding: 15px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.dropdown-button:hover {
+    background-color: #3a7bd5;
+}
+
+.course-list {
+    padding: 15px;
+    background-color: #f9f9f9;
+}
+
+.course-item {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.3s;}

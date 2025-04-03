@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAMATricApp - Add Subjects</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #f39c12;
+            --background-color: #f4f7f6;
+            --text-color: #333;
+            --card-bg: #ffffff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 30px;
+            background-color: var(--card-bg);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        h1, h2 {
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        #greeting {
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            text-align: center;
+            color: var(--secondary-color);
+        }
+
+        form {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        select, input[type="number"] {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background-color: #3a7bd5;
+            transform: translateY(-2px);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 10px;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            background-color: #f0f0f0;
+        }
+
+        th {
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 600;
+        }
+
+        tr {
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border-radius: 6px;
+            transition: transform 0.2s;
+        }
+
+        tr:hover {
+            transform: translateY(-2px);
+        }
+
+        td:first-child, th:first-child {
+            border-top-left-radius: 6px;
+            border-bottom-left-radius: 6px;
+        }
+
+        td:last-child, th:last-child {
+            border-top-right-radius: 6px;
+            border-bottom-right-radius: 6px;
+        }
+
+        .remove-btn {
+            color: #e74c3c;
+            cursor: pointer;
+            transition: color 0.3s;
+            background: none;
+            border: none;
+            font-size: 18px;
+            padding: 0;
+            margin-left: 10px;
+        }
+
+        .remove-btn:hover {
+            color: #c0392b;
+        }
+
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+        }
+
+        .toggle-link {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .toggle-link a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s;
+        }
+
+        .toggle-link a:hover {
+            color: var(--secondary-color);
+        }
+
+        #message, #addSubjectMessage {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        #qualifiedCoursesCount {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--secondary-color);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="greeting">Welcome, <span id="userName"></span>!</h1>
+
+        <div id="message"></div>
+
+        <h2>📚 Add Your Subject Marks</h2>
+
+        <form id="addMarksForm">
+            <label for="subjectSelect">📘 Select Subject:</label>
+            <select id="subjectSelect" required>
+                <option value="" disabled selected>Choose your subject</option>
+                <!-- Options will be populated dynamically -->
+            </select>
+            <label for="subjectMarks">🎯 Your Score (%):</label>
+            <input type="number" id="subjectMarks" placeholder="Enter your percentage" min="0" max="100" required />
+            <button type="submit">Add Subject <i class="fas fa-plus-circle"></i></button>
+        </form>
+
+        <div id="addSubjectMessage"></div>
+
+        <div id="subjectsContainer">
+            <h2>🏆 Your Academic Progress</h2>
+            <table id="subjectTable">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th>Score</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="subjectList">
+                    <!-- Table rows will be populated dynamically -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="button-container">
+            <button id="searchCoursesButton">🔍 Explore Courses</button>
+            <button id="showResultsButton">📊 View Results</button>
+        </div>
+
+        <div id="qualifiedCoursesCount"></div>
+
+        <div class="toggle-link">
+            <a href="index.html">🚪 Logout</a>
+        </div>
+    </div>
+
+    <script src="add_subjects.js"></script>
+</body>
+</html>

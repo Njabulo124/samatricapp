@@ -1,0 +1,299 @@
+/* Reset and Base Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f5f7fa;
+    color: #333;
+    line-height: 1.6;
+    padding-left: 250px; /* Account for fixed sidebar */
+}
+
+/* Sidebar Styles */
+.sidebar {
+    background: linear-gradient(145deg, #1a237e 0%, #283593 100%);
+    color: #fff;
+    width: 250px;
+    height: 100vh;
+    padding: 20px 0;
+    position: fixed;
+    left: 0;
+    top: 0;
+    box-shadow: 4px 0 15px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+}
+
+.sidebar h2 {
+    color: #fff;
+    text-align: center;
+    padding: 20px 15px;
+    margin-bottom: 30px;
+    font-size: 24px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar ul {
+    list-style: none;
+    padding: 0;
+}
+
+.sidebar ul li {
+    padding: 12px 25px;
+    transition: all 0.3s ease;
+    margin: 5px 0;
+}
+
+.sidebar ul li:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateX(10px);
+}
+
+.sidebar ul li a {
+    color: #fff;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 16px;
+}
+
+.sidebar ul li a i {
+    font-size: 20px;
+}
+
+/* Main Content Styles */
+.main-content {
+    min-height: 100vh;
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Home Page Styles */
+.home-header {
+    text-align: center;
+    padding: 40px 0;
+    background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)),
+                url('https://s3.wp.wsu.edu/uploads/sites/90/2015/08/EDUCATION-text.jpg');
+    background-size: cover;
+    background-position: center;
+    border-radius: 15px;
+    margin-bottom: 30px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+.home-header h1 {
+    color: #1a237e;
+    font-size: 2.5em;
+    margin-bottom: 15px;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.home-container {
+    background: #fff;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    margin-bottom: 30px;
+}
+
+.motivation-section {
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 10px;
+    margin-top: 20px;
+}
+
+.motivation-section blockquote {
+    margin: 20px 0;
+    padding: 15px 20px;
+    border-left: 4px solid #1a237e;
+    background: #fff;
+    border-radius: 5px;
+}
+
+/* Stream Info Styles */
+.stream {
+    background: #fff;
+    padding: 25px;
+    margin: 15px 0;
+    border-radius: 10px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease;
+    border-left: 5px solid #1a237e;
+}
+
+.stream:hover {
+    transform: translateY(-5px);
+}
+
+.stream h3 {
+    color: #1a237e;
+    margin-bottom: 15px;
+    font-size: 1.4em;
+}
+
+/* Bursaries Info Styles */
+#bursaries-info ul {
+    list-style: none;
+    padding: 0;
+}
+
+#bursaries-info li {
+    background: #fff;
+    padding: 20px;
+    margin: 15px 0;
+    border-radius: 10px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+}
+
+#bursaries-info strong {
+    color: #1a237e;
+    display: block;
+    margin-bottom: 10px;
+    font-size: 1.2em;
+}
+
+#bursaries-info a {
+    color: #1a237e;
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.3s;
+}
+
+#bursaries-info a:hover {
+    color: #3f51b5;
+}
+
+/* Register/Login Form Styles */
+.form-container {
+    background: #fff;
+    padding: 40px;
+    border-radius: 15px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 40px auto;
+}
+
+.form-container input {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 16px;
+}
+
+.form-container button {
+    width: 100%;
+    padding: 12px;
+    background: #1a237e;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background 0.3s;
+}
+
+.form-container button:hover {
+    background: #283593;
+}
+
+/* Footer Styles */
+footer {
+    background: linear-gradient(145deg, #1a237e 0%, #283593 100%);
+    color: #fff;
+    padding: 40px 20px;
+    margin-top: 50px;
+    border-radius: 15px 15px 0 0;
+}
+
+.features {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.features h3 {
+    color: #fff;
+    text-align: center;
+    margin-bottom: 30px;
+    font-size: 1.8em;
+}
+
+.features ul {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    list-style: none;
+}
+
+.features ul li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    transition: transform 0.3s;
+}
+
+.features ul li:hover {
+    transform: translateY(-3px);
+}
+
+.features ul li i {
+    color: #fff;
+    font-size: 24px;
+}
+
+footer p {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    body {
+        padding-left: 0;
+    }
+    
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+    }
+    
+    .main-content {
+        padding: 15px;
+    }
+    
+    .features ul {
+        grid-template-columns: 1fr;
+    }
+}
+
+#message {
+    margin: 15px 0;
+    padding: 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
